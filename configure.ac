@@ -16,7 +16,6 @@ AC_CHECK_HEADER([utlist.h], [],
         [AC_MSG_ERROR([required header utlist.h not found])])
 
 # Checks for typedefs, structures, and compiler characteristics.
-AC_CHECK_HEADER_STDBOOL
 AC_TYPE_SIZE_T
 AC_TYPE_UINT32_T
 
