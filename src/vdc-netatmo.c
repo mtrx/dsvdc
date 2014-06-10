@@ -530,7 +530,7 @@ int netatmo_get_token()
 
 	json_object *jobj = json_tokener_parse(response->memory);
 	json_object_object_foreach(jobj, key, val) {
-		enum json_type type = json_object_get_type(val);
+		enum json_type type = val ? json_object_get_type(val) : 0;
 
 		if (!strcmp(key, "access_token")) {
 			if (type == json_type_string) {
@@ -547,6 +547,8 @@ int netatmo_get_token()
 				int exp = json_object_get_int(val);
 				g_refresh_token_valid_until = time(NULL) + exp - 120; // 2 minutes before expiration
 			}
+		} else {
+			printf("Unknown key: %s\n", key);
 		}
 	}
 
@@ -662,7 +664,7 @@ int netatmo_get_devices()
 
 										for (nd = 0; nd < nmodule->values_num; nd++) {
 											json_object* jobj4 = json_object_array_get_idx(val, nd);
-											enum json_type type = json_object_get_type(jobj4);
+											enum json_type type = jobj4 ? json_object_get_type(jobj4) : -1;
 											if (type == json_type_string) {
 												vmodule[nd].data_type = strdup(json_object_get_string(jobj4));
 											}
@@ -702,7 +704,7 @@ int netatmo_get_devices()
 
 										for (nd = 0; nd < nmodule->values_num; nd++) {
 											json_object* jobj4 = json_object_array_get_idx(val, nd);
-											enum json_type type = json_object_get_type(jobj4);
+											enum json_type type = jobj4 ? json_object_get_type(jobj4) : -1;
 											if (type == json_type_string) {
 												vmodule[nd].data_type = strdup(json_object_get_string(jobj4));
 											}
