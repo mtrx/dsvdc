@@ -36,6 +36,7 @@
 #include <json/json.h>
 #include <utlist.h>
 
+#include <digitalSTROM/dsuid/dsuid.h>
 #include <dsvdc/dsvdc.h>
 
 #define MAX_MODULES 5
@@ -50,13 +51,14 @@ typedef struct netatmo_value {
 } netatmo_value_t;
 
 typedef struct netatmo_module {
+	dsuid_t dsuid;
 	char *id;
 	char *name;
 	time_t last_message;
 	time_t last_seen;
 	int values_num;
 	netatmo_value_t values[MAX_VALUES];
-
+	int battery_vp;
 	unsigned char bid_length;
 	unsigned char bid[16];
 } netatmo_module_t;
@@ -81,7 +83,8 @@ typedef struct netatmo_data {
 
 typedef struct netatmo_vdcd {
 	struct netatmo_vdcd* next;
-	char dsuid[136 / 8 * 2 + 1];
+	dsuid_t dsuid;
+	char dsuidstring[36];
 	char *id;
 	int announced;
 	int present;
@@ -96,11 +99,17 @@ struct memory_struct {
 	size_t size;
 };
 
+struct data {
+	char trace_ascii; /* 1 or 0 */
+};
+
 #define NETATMO_OUT_OF_MEMORY -1
 #define NETATMO_AUTH_FAILED -10
 #define NETATMO_BAD_CONFIG -12
 #define NETATMO_DEVLIST_FAILED -13
 #define NETATMO_GETMEASURE_FAILED -13
+#define NETATMO_BAD_ACCESS_TOKEN -14
+
 
 static const char *g_cfgfile = "netatmo.cfg";
 static const char *g_client_id = "52823f931877590c917b23f7";
@@ -110,8 +119,10 @@ static char *g_refresh_token = NULL;
 static time_t g_refresh_token_valid_until = 0;
 static time_t g_resync_devices = 60 * 60;
 static time_t g_refresh_values = 5 * 60;
-static char *g_vdc_dsuid = "3504175FE0000000BC514CBE";
+static char g_vdc_dsuid[35] = { 0, };
+static char g_lib_dsuid[35] = { "053f848b85bb382198025cea1fd087f100" };
 static int g_shutdown_flag = 0;
+static int g_debug_flag = 0;
 
 
 /*******************************************************************/
@@ -140,6 +151,8 @@ int read_config()
 		return -1;
 	}
 
+	if (config_lookup_string(&config, "vdcdsuid", (const char **) &sval))
+		strncpy(g_vdc_dsuid, sval, sizeof(g_vdc_dsuid));
 	if (config_lookup_string(&config, "secret", (const char **) &sval))
 		g_client_secret = strdup(sval);
 	if (config_lookup_string(&config, "username", (const char **) &sval))
@@ -150,6 +163,7 @@ int read_config()
 		netatmo.authcode = strdup(sval);
 	config_lookup_int(&config, "resync_devices", (int *) &g_resync_devices);
 	config_lookup_int(&config, "refresh_values", (int *) &g_refresh_values);
+	config_lookup_int(&config, "debug", (int *) &g_debug_flag);
 
 	if (config_lookup_string(&config, "device.station_name", (const char **) &sval))
 		netatmo.base.station_name = strdup(sval);
@@ -210,9 +224,14 @@ int read_config()
 		netatmo_module_t* m = &netatmo.base.modules[n];
 
 		if (m->id) {
+			char buffer[128];
+			strcpy(buffer, netatmo.base.bssid);
+			strcat(buffer, "-");
+			strcat(buffer, m->id);
+
 			int found = 0;
 			LL_FOREACH(devlist, dev) {
-				if (m->id && (strcmp(m->id, dev->id) == 0)) {
+				if (m->id && (strcasecmp(buffer, dev->id) == 0)) {
 					found = 1; break;
 				}
 			}
@@ -224,16 +243,12 @@ int read_config()
 				memset(dev, 0, sizeof(netatmo_vdcd_t));
 			}
 
-			dev->id = strdup(m->id);
+			dev->id = strdup(buffer);
 			dev->present = false;
 			dev->mod = m;
 
-			char *p = dev->dsuid;
-			strcpy(p, "3504175FE0AA");
-			p += 12;
-			for (v = 0; v < 6; v ++) {
-				p += sprintf(p, "%02X", m->bid[v]);
-			}
+			dsuid_generate_v3_from_namespace(DSUID_NS_IEEE_MAC, buffer, &dev->dsuid);
+			dsuid_to_string(&dev->dsuid, dev->dsuidstring);
 
 			if (!found) {
 				LL_APPEND(devlist, dev);
@@ -255,6 +270,12 @@ int write_config()
 
 	config_init(&config);
 	cfg_root = config_root_setting(&config);
+
+	setting = config_setting_add(cfg_root, "vdcdsuid", CONFIG_TYPE_STRING);
+	if (setting == NULL ) {
+		setting = config_setting_get_member(cfg_root, "vdcdsuid");
+	}
+	config_setting_set_string(setting, g_vdc_dsuid);
 
 	setting = config_setting_add(cfg_root, "secret", CONFIG_TYPE_STRING);
 	if (setting == NULL ) {
@@ -422,6 +443,92 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
 	return realsize;
 }
 
+static void DebugDump(const char *text,
+		FILE *stream, unsigned char *ptr, size_t size,
+		char nohex)
+{
+  size_t i;
+  size_t c;
+
+  unsigned int width=0x10;
+
+  if(nohex)
+    /* without the hex output, we can fit more on screen */
+    width = 0x40;
+
+  fprintf(stream, "%s, %10.10ld bytes (0x%8.8lx)\n",
+          text, (long)size, (long)size);
+
+  for(i=0; i<size; i+= width) {
+
+    fprintf(stream, "%4.4lx: ", (long)i);
+
+    if(!nohex) {
+      /* hex not disabled, show it */
+      for(c = 0; c < width; c++)
+        if(i+c < size)
+          fprintf(stream, "%02x ", ptr[i+c]);
+        else
+          fputs("   ", stream);
+    }
+
+    for(c = 0; (c < width) && (i+c < size); c++) {
+      /* check for 0D0A; if found, skip past and start a new line of output */
+      if (nohex && (i+c+1 < size) && ptr[i+c]==0x0D && ptr[i+c+1]==0x0A) {
+        i+=(c+2-width);
+        break;
+      }
+      fprintf(stream, "%c",
+              (ptr[i+c]>=0x20) && (ptr[i+c]<0x80)?ptr[i+c]:'.');
+      /* check again for 0D0A, to avoid an extra \n if it's at width */
+      if (nohex && (i+c+2 < size) && ptr[i+c+1]==0x0D && ptr[i+c+2]==0x0A) {
+        i+=(c+3-width);
+        break;
+      }
+    }
+    fputc('\n', stream); /* newline */
+  }
+  fflush(stream);
+}
+
+static int DebugCallback(CURL *handle, curl_infotype type,
+		char *data, size_t size,
+		void *userp)
+{
+
+	struct data *config = (struct data *)userp;
+	const char *text;
+	(void)handle; /* prevent compiler warning */
+
+  switch (type) {
+  case CURLINFO_TEXT:
+    fprintf(stderr, "== Info: %s", data);
+  default: /* in case a new one is introduced to shock us */
+    return 0;
+
+  case CURLINFO_HEADER_OUT:
+    text = "=> Send header";
+    break;
+  case CURLINFO_DATA_OUT:
+    text = "=> Send data";
+    break;
+  case CURLINFO_SSL_DATA_OUT:
+    text = "=> Send SSL data";
+    break;
+  case CURLINFO_HEADER_IN:
+    text = "<= Recv header";
+    break;
+  case CURLINFO_DATA_IN:
+    text = "<= Recv data";
+    break;
+  case CURLINFO_SSL_DATA_IN:
+    text = "<= Recv SSL data";
+    break;
+  }
+  DebugDump(text, stderr, (unsigned char *)data, size, config->trace_ascii);
+  return 0;
+}
+
 struct memory_struct* query(const char *url, const char *postthis)
 {
 	CURL *curl;
@@ -448,15 +555,30 @@ struct memory_struct* query(const char *url, const char *postthis)
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void * )chunk);
-	curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	curl_easy_setopt(curl, CURLOPT_POST, 1);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postthis);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long )strlen(postthis));
+
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded;charset=UTF-8");
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	if (g_debug_flag)
+	{
+		struct data config;
+		config.trace_ascii = 1; /* enable ascii tracing */
+
+		curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, DebugCallback);
+		curl_easy_setopt(curl, CURLOPT_DEBUGDATA, &config);
+		/* the DEBUGFUNCTION has no effect until we enable VERBOSE */
+		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+	}
 
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
 	}
+	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 
 	if (res != CURLE_OK) {
@@ -494,7 +616,8 @@ int netatmo_get_token()
 		g_refresh_token = NULL;
 	} else if (netatmo.authcode && strlen(netatmo.authcode) > 0) {
 		char request_body[1024];
-		strcpy(request_body, "grant_type=authorization_code&client_id=");
+		strcpy(request_body, "grant_type=authorization_code");
+		strcat(request_body, "&client_id=");
 		strcat(request_body, g_client_id);
 		strcat(request_body, "&client_secret=");
 		strcat(request_body, g_client_secret);
@@ -509,7 +632,8 @@ int netatmo_get_token()
 		}
 	} else if (netatmo.username && netatmo.password) {
 		char request_body[1024];
-		strcpy(request_body, "grant_type=password&client_id=");
+		strcpy(request_body, "grant_type=password");
+		strcat(request_body, "&client_id=");
 		strcat(request_body, g_client_id);
 		strcat(request_body, "&client_secret=");
 		strcat(request_body, g_client_secret);
@@ -517,6 +641,7 @@ int netatmo_get_token()
 		strcat(request_body, netatmo.username);
 		strcat(request_body, "&password=");
 		strcat(request_body, netatmo.password);
+		strcat(request_body, "&scope=read_station");
 
 		printf("Get access token with username and password\n");
 		response = query("https://api.netatmo.net/oauth2/token", request_body);
@@ -547,6 +672,10 @@ int netatmo_get_token()
 				int exp = json_object_get_int(val);
 				g_refresh_token_valid_until = time(NULL) + exp - 120; // 2 minutes before expiration
 			}
+		} else if (!strcmp(key, "error")) {
+			if (type == json_type_string) {
+				printf("NetAtmo returned error: %s\n", json_object_get_string(val));
+			}
 		} else {
 			printf("Unknown key: %s\n", key);
 		}
@@ -566,6 +695,9 @@ int netatmo_get_devices()
 	if (!g_access_token) {
 		if ((rc = netatmo_get_token()) != 0) {
 			return rc;
+		}
+		if (!g_access_token) {
+			return NETATMO_BAD_ACCESS_TOKEN;
 		}
 	}
 
@@ -696,6 +828,8 @@ int netatmo_get_devices()
 										nmodule->last_message = json_object_get_int(val);
 									} else if (!strcmp(key, "last_seen") && (type == json_type_string)) {
 										nmodule->last_seen = json_object_get_int(val);
+									} else if (!strcmp(key, "battery_vp") && (type == json_type_string)) {
+										nmodule->battery_vp = json_object_get_int(val);
 									} else if (!strcmp(key, "data_type") && (type == json_type_array)) {
 										array_list* dtypes = json_object_get_array(val);
 
@@ -728,11 +862,17 @@ int netatmo_get_devices()
 		if (m->id) {
 			unsigned char *mac = m->bid;
 			m->bid_length = 6;
-			sscanf(m->id, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+			sscanf(m->id, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+					&mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+
+			char buffer[128] = { 0, };
+			strcpy(buffer, netatmo.base.bssid);
+			strcat(buffer, "-");
+			strcat(buffer, m->id);
 
 			int found = 0;
 			LL_FOREACH(devlist, dev) {
-				if (!strcmp(m->id, dev->id)) {
+				if (!strcmp(buffer, dev->id)) {
 					found = 1; break;
 				}
 			}
@@ -745,18 +885,16 @@ int netatmo_get_devices()
 				LL_APPEND(devlist, dev);
 			}
 
-			dev->id = strdup(m->id);
+			dev->id = strdup(buffer);
 			dev->present = true;
 			dev->mod = m;
 
-			// TODO: add libdsvdc method to generate proper dsuid's
+			dsuid_generate_v3_from_namespace(DSUID_NS_IEEE_MAC, buffer, &dev->dsuid);
+			dsuid_to_string(&dev->dsuid, dev->dsuidstring);
 
-			char *p = dev->dsuid;
-			strcpy(p, "3504175FE0AA");
-			p += 12;
-			for (v = 0; v < 6; v ++) {
-				p += sprintf(p, "%02X", m->bid[v]);
-			}
+			printf("%s module: ID %s - DSUID %s\n",
+					found ? "Existing" : "New",
+					dev->id, dev->dsuidstring);
 		}
 	}
 
@@ -871,8 +1009,7 @@ void signal_handler(int signum)
     }
 }
 
-static void hello_cb(dsvdc_t *handle __attribute__((unused)),
-		void *userdata)
+static void hello_cb(dsvdc_t *handle __attribute__((unused)), void *userdata)
 {
     printf("Hello callback triggered, we are ready\n");
     bool *ready = (bool *)userdata;
@@ -885,27 +1022,34 @@ static void ping_cb(dsvdc_t *handle __attribute__((unused)),
 {
     int ret;
     printf("received ping for dsuid %s\n", dsuid);
-    if (strcmp(dsuid, g_vdc_dsuid) == 0) {
+    if (strcasecmp(dsuid, g_vdc_dsuid) == 0) {
         ret = dsvdc_send_pong(handle, dsuid);
         printf("sent pong for vdc %s / return code %d\n", dsuid, ret);
         return;
     }
     netatmo_vdcd_t* dev;
 	LL_FOREACH(devlist, dev) {
-	    if (strcmp(dsuid, dev->dsuid) == 0)
+	    if (strcasecmp(dsuid, dev->dsuidstring) == 0)
 	    {
-	        ret = dsvdc_send_pong(handle, dev->dsuid);
+	        ret = dsvdc_send_pong(handle, dev->dsuidstring);
 	        printf("sent pong for device %s / return code %d\n", dsuid, ret);
 	        return;
 	    }
 	}
 }
 
-static void announce_cb(dsvdc_t *handle __attribute__((unused)),
+static void announce_device_cb(dsvdc_t *handle __attribute__((unused)),
 		int code, void *arg,
 		void *userdata __attribute__((unused)))
 {
     printf("announcement of device %s returned code: %d\n", (char *)arg, code);
+}
+
+static void announce_container_cb(dsvdc_t *handle __attribute__((unused)),
+		int code, void *arg,
+		void *userdata __attribute__((unused)))
+{
+    printf("announcement of container %s returned code: %d\n", (char *)arg, code);
 }
 
 static void bye_cb(dsvdc_t *handle __attribute__((unused)),
@@ -913,124 +1057,275 @@ static void bye_cb(dsvdc_t *handle __attribute__((unused)),
 		void *userdata)
 {
     printf("received bye for dsuid %s\n", dsuid);
-    bool *ready = (bool *)userdata;
-    *ready = false;
+    *(bool *) userdata = false;
 }
 
-static void getprop_cb(dsvdc_t *handle,
-		const char *dsuid,
-		const char *name,
-		uint32_t offset,
-		uint32_t count,
-		dsvdc_property_t *property,
-		void *userdata __attribute__((unused)))
+static void getprop_cb(dsvdc_t *handle, const char *dsuid,
+		dsvdc_property_t *property, const dsvdc_property_t *query,
+		void *userdata)
 {
-    printf("received get property callback for dsuid %s: \"%s\", offset/count %d/%d\n",
-    		dsuid, name, offset, count);
+	(void) userdata;
+	int ret;
+	size_t i;
+	char *name;
+	netatmo_vdcd_t* dev;
 
-    netatmo_vdcd_t* dev;
-	LL_FOREACH(devlist, dev) {
-	    if (strcmp(dsuid, dev->dsuid) == 0) {
-	    	break;
-	    }
+	printf("\n** get property for dsuid: %s\n", dsuid);
+
+	LL_FOREACH(devlist, dev)
+	{
+		if (strcasecmp(dsuid, dev->dsuidstring) == 0) {
+			break;
+		}
 	}
 	if (dev == NULL) {
-        fprintf(stderr, "GetProperty: unhandled dsuid %s\n", dsuid);
-        dsvdc_property_free(property);
+		fprintf(stderr, "getprop_cb: unhandled dsuid %s\n", dsuid);
+		dsvdc_property_free(property);
 		return;
 	}
 
-    if (strcmp(name, "primaryGroup") == 0)
-    {
-        dsvdc_property_add_uint(property, 0, "primaryGroup", 3);
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "isMember") == 0)
-    {
-    	int n;
-    	for (n = 0; n < 64; n++) {
-    		switch (n) {
-    		case 0:
-    		case 3:
-    		case 48:
-        		dsvdc_property_add_bool(property, 0, "isMember", true);
-        		break;
-    		default:
-        		dsvdc_property_add_bool(property, 0, "isMember", false);
-        		break;
-    		}
-    	}
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "buttonInputDescriptions") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "buttonInputSettings") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "outputDescriptions") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "outputSettings") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "binaryInputDescriptions") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "binaryInputSettings") == 0)
-    {
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "sensorDescriptions") == 0)
-    {
-    	int n, sensorUsage, sensorType;
-    	char sensorName[64];
+	for (i = 0; i < dsvdc_property_get_num_properties(query); i++) {
 
-    	if (dev->mod->bid[0] == 2) {
-    		sensorUsage = 2; // Outdoor
-    	} else {
-    		sensorUsage = 1; // Indoor
-    	}
+		int ret = dsvdc_property_get_name(query, i, &name);
+		if (ret != DSVDC_OK) {
+			fprintf(stderr, "getprop_cb: error getting property name, abort\n");
+			dsvdc_send_property_response(handle, property);
+			return;
+		}
+        if (!name) {
+        	fprintf(stderr, "getprop_cb: not yet handling wildcard properties\n");
+            dsvdc_send_property_response(handle, property);
+            continue;
+        }
+        printf("**** request name: %s\n", name);
 
-    	for (n = 0; n < dev->mod->values_num; n++) {
-    		if (strcmp(dev->mod->values[n].data_type, "Temperature") == 0) {
-    			sensorType = 1;
-    		} else if (strcmp(dev->mod->values[n].data_type, "Humidity") == 0) {
-    			sensorType = 2;
-    		} else if (strcmp(dev->mod->values[n].data_type, "Co2") == 0) {
-    			sensorType = 5;
-    		} else if (strcmp(dev->mod->values[n].data_type, "Pressure") == 0) {
-    			sensorType = 14;
-    		} else if (strcmp(dev->mod->values[n].data_type, "Noise") == 0) {
-    			sensorType = 15;
-    		} else {
-    			sensorType = 255;
-    		}
-    		snprintf(sensorName, 64, "%s-%s", dev->mod->name, dev->mod->values[n].data_type);
-    		dsvdc_property_add_string(property, n, "name", sensorName);
-    		dsvdc_property_add_uint(property, n, "sensorType", sensorType);
-    		dsvdc_property_add_uint(property, n, "sensorUsage", sensorUsage);
-    		dsvdc_property_add_double(property, n, "updateInterval", 60 * 5);
 
-    		printf("  dsuid %s sensor %d: %s type %d usage %d\n", dsuid, n, sensorName, sensorType, sensorUsage);
-    	}
-        dsvdc_send_property_response(handle, property);
-    }
-    else if (strcmp(name, "name") == 0)
-    {
-        dsvdc_property_add_string(property, 0, "name", dev->mod->name);
-        dsvdc_send_property_response(handle, property);
-    }
-    else
-    {
-        fprintf(stderr, "unhandled getProperty \"%s\"\n", name);
-        dsvdc_property_free(property);
-    }
+		if (strcmp(name, "primaryGroup") == 0) {
+			dsvdc_property_add_uint(property, "primaryGroup", 3);
+
+		} else if (strcmp(name, "buttonInputDescriptions") == 0) {
+
+		} else if (strcmp(name, "buttonInputSettings") == 0) {
+
+		} else if (strcmp(name, "outputDescription") == 0) {
+
+		} else if (strcmp(name, "outputSettings") == 0) {
+
+		} else if (strcmp(name, "channelDescriptions") == 0) {
+
+		} else if (strcmp(name, "channelSettings") == 0) {
+
+		} else if (strcmp(name, "binaryInputDescriptions") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            dsvdc_property_t *nProp;
+			if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+				break;
+			}
+            dsvdc_property_add_string(nProp, "name", "Battery Status");
+            dsvdc_property_add_uint(nProp, "sensorFunction", 12);
+            dsvdc_property_add_double(nProp, "updateInterval", 60 * 5);
+            dsvdc_property_add_property(reply, "0", &nProp);
+
+            dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "binaryInputSettings") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            dsvdc_property_t *nProp;
+			if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+				break;
+			}
+            dsvdc_property_add_uint(nProp, "group", 8);
+            dsvdc_property_add_uint(nProp, "sensorFunction", 12);
+            dsvdc_property_add_property(reply, "0", &nProp);
+
+            dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "sensorDescriptions") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            int n, sensorUsage, sensorType;
+			char sensorName[64];
+			char sensorIndex[64];
+
+			if (dev->mod->bid[0] == 2) {
+				sensorUsage = 2; // Outdoor
+			} else {
+				sensorUsage = 1; // Indoor
+			}
+
+			for (n = 0; n < dev->mod->values_num; n++) {
+				if (strcmp(dev->mod->values[n].data_type, "Temperature") == 0) {
+					sensorType = 1;
+				} else if (strcmp(dev->mod->values[n].data_type, "Humidity") == 0) {
+					sensorType = 2;
+				} else if (strcmp(dev->mod->values[n].data_type, "Co2") == 0) {
+					sensorType = 5;
+				} else if (strcmp(dev->mod->values[n].data_type, "Pressure") == 0) {
+					sensorType = 14;
+				} else if (strcmp(dev->mod->values[n].data_type, "Noise") == 0) {
+					sensorType = 15;
+				} else {
+					sensorType = 253;
+				}
+				snprintf(sensorName, 64, "%s-%s", dev->mod->name,
+						dev->mod->values[n].data_type);
+
+				dsvdc_property_t *nProp;
+				if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+					break;
+				}
+				dsvdc_property_add_string(nProp, "name", sensorName);
+				dsvdc_property_add_uint(nProp, "sensorType", sensorType);
+				dsvdc_property_add_uint(nProp, "sensorUsage", sensorUsage);
+				dsvdc_property_add_double(nProp, "alifeSignInterval", 300);
+
+				snprintf(sensorIndex, 64, "%d", n);
+				dsvdc_property_add_property(reply, sensorIndex, &nProp);
+
+				printf("  dsuid %s sensor %d: %s type %d usage %d\n", dsuid, n,
+						sensorName, sensorType, sensorUsage);
+			}
+			dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "sensorSettings") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            char sensorIndex[64];
+			int n;
+			for (n = 0; n < dev->mod->values_num; n++) {
+				dsvdc_property_t *nProp;
+				if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+					break;
+				}
+				dsvdc_property_add_uint(nProp, "group", 48);
+				dsvdc_property_add_uint(nProp, "minPushInterval", 300);
+				dsvdc_property_add_double(nProp, "changesOnlyInterval", 300);
+
+				snprintf(sensorIndex, 64, "%d", n);
+				dsvdc_property_add_property(reply, sensorIndex, &nProp);
+			}
+			dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "sensorStates") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            int idx, n;
+            char* sensorIndex;
+            dsvdc_property_t *sensorRequest;
+            dsvdc_property_get_property_by_index(query, 0, &sensorRequest);
+            if (dsvdc_property_get_name(sensorRequest, 0, &sensorIndex) != DSVDC_OK) {
+            	printf("****** could not parse index\n");
+            	idx = -1;
+            } else {
+            	idx = strtol(sensorIndex, NULL, 10);
+            }
+            time_t now = time(NULL);
+
+			for (n = 0; n < dev->mod->values_num; n++) {
+				if (idx >= 0 && idx != n) {
+					continue;
+				}
+
+				dsvdc_property_t *nProp;
+				if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+					break;
+				}
+
+				double val = dev->mod->values[n].value;
+
+				dsvdc_property_add_double(nProp, "value", val);
+				dsvdc_property_add_int(nProp, "age", now - dev->mod->values[n].last_query);
+				dsvdc_property_add_int(nProp, "error", 0);
+				dsvdc_property_add_property(reply, sensorIndex, &nProp);
+			}
+			dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "binaryInputStates") == 0) {
+            dsvdc_property_t *reply;
+            ret  = dsvdc_property_new(&reply);
+            if (ret != DSVDC_OK)
+            {
+                printf("failed to allocate reply property for %s\n", name);
+                free(name);
+                continue;
+            }
+
+            int idx, n;
+            char* sensorIndex;
+            dsvdc_property_t *sensorRequest;
+            dsvdc_property_get_property_by_index(query, 0, &sensorRequest);
+            if (dsvdc_property_get_name(sensorRequest, 0, &sensorIndex) != DSVDC_OK) {
+            	printf("****** could not parse index\n");
+            	idx = -1;
+            } else {
+            	idx = strtol(sensorIndex, NULL, 10);
+            }
+
+            dsvdc_property_t *nProp;
+            if ((idx == 0) && (dsvdc_property_new(&nProp) == DSVDC_OK)) {
+
+            	bool val;
+    			if (dev->mod->bid[0] == 2) {
+    				val = dev->mod->battery_vp < 4500; // /*for raingauge and outdoor module*/  class NABatteryLevelModule
+    			} else {
+    				val = dev->mod->battery_vp < 4920; // /*indoor modules*/ class NABatteryLevelIndoorModul
+    			}
+
+				dsvdc_property_add_bool(nProp, "value", val);
+				dsvdc_property_add_int(nProp, "age", 0);
+				dsvdc_property_add_int(nProp, "error", 0);
+				dsvdc_property_add_property(reply, sensorIndex, &nProp);
+            }
+			dsvdc_property_add_property(property, name, &reply);
+
+		} else if (strcmp(name, "name") == 0) {
+			dsvdc_property_add_string(property, "name", dev->mod->name);
+
+		} else {
+			fprintf(stderr, "** Unhandled Property \"%s\"\n", name);
+		}
+
+		free(name);
+	}
+
+	dsvdc_send_property_response(handle, property);
 }
 
 int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
@@ -1039,6 +1334,7 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
 
     bool ready = false;
     bool printed = false;
+    bool announced = false;
 
     memset(&action, 0, sizeof(action));
     action.sa_handler = signal_handler;
@@ -1071,16 +1367,24 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
         fprintf(stderr, "Could not get device data from NetAtmo service!\n");
         return EXIT_FAILURE;
     }
+
+    /* generate a dsuid v1 for the vdc */
+    if (g_vdc_dsuid[0] == 0) {
+    	dsuid_t gdsuid;
+    	dsuid_generate_v1(&gdsuid);
+    	dsuid_to_string(&gdsuid, g_vdc_dsuid);
+        fprintf(stderr, "Generated VDC DSUID: %s\n", g_vdc_dsuid);
+    }
+
+    /* store configuration data, including the NetAtmo device setup and the VDC DSUID */
     if (write_config() < 0)
     {
         fprintf(stderr, "Could not write configuration data!\n");
     }
 
-    printf("dSVdc NetAtmo - press Ctrl-C to quit\n");
-
     /* initialize new library instance */
     dsvdc_t *handle = NULL;
-    if (dsvdc_new(0, g_vdc_dsuid, "NetAtmo", &ready, &handle) != DSVDC_OK)
+    if (dsvdc_new(0, g_lib_dsuid, "NetAtmo", &ready, &handle) != DSVDC_OK)
     {
         fprintf(stderr, "dsvdc_new() initialization failed\n");
         return EXIT_FAILURE;
@@ -1092,7 +1396,7 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
     dsvdc_set_bye_callback(handle, bye_cb);
     dsvdc_set_get_property_callback(handle, getprop_cb);
 
-    while(!g_shutdown_flag)
+    while (!g_shutdown_flag)
     {
         /* let the work function do our timing, 2secs timeout */
         dsvdc_work(handle, 2);
@@ -1133,6 +1437,7 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
             LL_FOREACH(devlist, dev) {
             	dev->announced = false;
             }
+            announced = false;
         }
         else
         {
@@ -1143,35 +1448,68 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
             	int v;
                 netatmo_vdcd_t* dev;
 
+                if (!announced)
+                {
+                	if (dsvdc_announce_container(handle, g_vdc_dsuid, (void *) g_lib_dsuid, announce_container_cb) == DSVDC_OK)
+                	{
+                		announced = true;
+                	}
+                }
+
 				LL_FOREACH(devlist, dev) {
             		if (dev->present && !dev->announced) {
-                    	if (dsvdc_announce_device(handle, dev->dsuid, (void *)dev->dsuid, announce_cb) == DSVDC_OK)
-                        {
+            			if (dsvdc_announce_device(handle, g_vdc_dsuid, dev->dsuidstring, (void *) NULL, announce_device_cb) == DSVDC_OK)
+            			{
                             dev->announced = true;
                         }
             		}
             		if (dev->present) {
+            			dsvdc_property_t* pushEnvelope;
+            			dsvdc_property_t* propState;
         				dsvdc_property_t* prop;
-            			for (v = 0; v < dev->mod->values_num; v++) {
-            				if (dev->mod->values[v].last_reported < dev->mod->values[v].last_query) {
-            					double val = dev->mod->values[v].value;
 
-                				if (dsvdc_property_new("sensorStates", 1, &prop) < 0) {
-                					continue;
-                				}
-            					dsvdc_property_add_double(prop, 0, "value", val);
-                				dsvdc_push_property(handle, dev->dsuid, "sensorStates", v, prop);
-                				dsvdc_property_free(prop);
+        				// Test first element if there are new values
+        				if (dev->mod->values[0].last_reported >= dev->mod->values[0].last_query)
+        				{
+        					continue;
+        				}
 
-                				dev->mod->values[v].last_reported = time(NULL);
-            				}
+        				dsvdc_property_new(&pushEnvelope);
+        				dsvdc_property_new(&propState);
+        				dsvdc_property_add_property(pushEnvelope, "sensorStates", &propState);
+
+        				for (v = 0; v < dev->mod->values_num; v++) {
+        					double val = dev->mod->values[v].value;
+        					time_t now = time(NULL);
+
+        					if (dsvdc_property_new(&prop) != DSVDC_OK) {
+        						continue;
+        					}
+        					dsvdc_property_add_double(prop, "value", val);
+        					dsvdc_property_add_int(prop, "age", now - dev->mod->values[v].last_query);
+        					dsvdc_property_add_int(prop, "error", 0);
+
+        					char sensorIndex[64];
+        					snprintf(sensorIndex, 64, "%d", v);
+        					dsvdc_property_add_property(propState, sensorIndex, &prop);
+
+        					dev->mod->values[v].last_reported = now;
             			}
+
+
+        				dsvdc_push_property(handle, dev->dsuidstring, pushEnvelope);
+        				dsvdc_property_free(pushEnvelope);
             		}
             	}
             }
         }
     }
 
+    netatmo_vdcd_t* dev;
+    LL_FOREACH(devlist, dev)
+    {
+    	dsvdc_device_vanished(handle, dev->dsuidstring);
+    }
     dsvdc_cleanup(handle);
 
     curl_global_cleanup();
