@@ -772,6 +772,8 @@ netatmo_get_devices()
   }
   memset(netatmo.base.modules, 0, sizeof(netatmo_module_t) * MAX_MODULES);
 
+  printf("\n*** DEVICE Query:\n%s\n", response->memory);
+
   json_object *jobj = json_tokener_parse(response->memory);
   json_object_object_foreach(jobj, key, val) {
     enum json_type type = json_object_get_type(val);
@@ -806,9 +808,9 @@ netatmo_get_devices()
 
                   if (!strcmp(key, "_id") && (type == json_type_string)) {
                     nmodule->id = strdup(json_object_get_string(val));
-                  } else if (!strcmp(key, "last_message") && (type == json_type_string)) {
+                  } else if (!strcmp(key, "last_message") && (type == json_type_int)) {
                     nmodule->last_message = json_object_get_int(val);
-                  } else if (!strcmp(key, "last_seen") && (type == json_type_string)) {
+                  } else if (!strcmp(key, "last_seen") && (type == json_type_int)) {
                     nmodule->last_seen = json_object_get_int(val);
                   } else if (!strcmp(key, "place") && (type == json_type_object)) {
                     json_object *jobj4 = val;
@@ -992,6 +994,8 @@ netatmo_get_values()
     }
     now = time(NULL);
 
+    printf("\n*** VALUE Query:\n%s\n", response->memory);
+
     json_object *jobj = json_tokener_parse(response->memory);
     json_object_object_foreach(jobj, key, val)
     {
@@ -1014,26 +1018,32 @@ netatmo_get_values()
             enum json_type type = json_object_get_type(val);
             //printf(" -> key %s, type %d\n", key, type);
 
-            if (!strcmp(key, "value") && (type == json_type_array)) {
-              json_object* jobj3 = json_object_array_get_idx(val, 0);
+            if (!strcmp(key, "beg_time") && (type == json_type_string)) {
+              now = json_object_get_int(val);
 
+            } else if (!strcmp(key, "value") && (type == json_type_array)) {
+              json_object* jobj3 = json_object_array_get_idx(val, 0);
               enum json_type type = json_object_get_type(jobj3);
               if (type == json_type_array) {
                 array_list* va = json_object_get_array(jobj3);
-                if (va->length >= 2) {
-                  json_object* jobj_t = json_object_array_get_idx(jobj3, 0);
-                  json_object* jobj_h = json_object_array_get_idx(jobj3, 1);
-                  for (v = 0; v < netatmo.base.modules[n].values_num; v++) {
-                    if (strcmp(netatmo.base.modules[n].values[v].data_type, "Temperature") == 0) {
-                      netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
-                      netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_t);
-                      netatmo.base.modules[n].values[v].last_query = now;
-                    }
-                    if (strcmp(netatmo.base.modules[n].values[v].data_type, "Humidity") == 0) {
-                      netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
-                      netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_h);
-                      netatmo.base.modules[n].values[v].last_query = now;
-                    }
+                json_object* jobj_t = va->length >= 1 ? json_object_array_get_idx(jobj3, 0) : NULL;
+                json_object* jobj_h = va->length >= 2 ? json_object_array_get_idx(jobj3, 1) : NULL;
+                json_object* jobj_c = va->length >= 3 ? json_object_array_get_idx(jobj3, 2) : NULL;
+                for (v = 0; v < netatmo.base.modules[n].values_num; v++) {
+                  if (strcmp(netatmo.base.modules[n].values[v].data_type, "Temperature") == 0) {
+                    netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
+                    netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_t);
+                    netatmo.base.modules[n].values[v].last_query = now;
+                  }
+                  if (strcmp(netatmo.base.modules[n].values[v].data_type, "Humidity") == 0) {
+                    netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
+                    netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_h);
+                    netatmo.base.modules[n].values[v].last_query = now;
+                  }
+                  if (strcmp(netatmo.base.modules[n].values[v].data_type, "Co2") == 0) {
+                    netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
+                    netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_c);
+                    netatmo.base.modules[n].values[v].last_query = now;
                   }
                 }
               }
