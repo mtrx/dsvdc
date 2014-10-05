@@ -1170,10 +1170,16 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
         dsvdc_property_add_string(property, name, info);
 
       } else if (strcmp(name, "modelGuid") == 0) {
+        dsvdc_property_add_string(property, name, "NetAtmo VDC Prototype by mtr [modelGuid]");
 
       } else if (strcmp(name, "vendorId") == 0) {
+        dsvdc_property_add_string(property, name, "michael@tross.org");
+
+      } else if (strcmp(name, "name") == 0) {
+        dsvdc_property_add_string(property, name, "NetAtmo VDC");
 
       } else if (strcmp(name, "model") == 0) {
+        dsvdc_property_add_string(property, name, "NetAtmo VDC Prototype by mtr [model]");
 
       } else if (strcmp(name, "capabilities") == 0) {
         dsvdc_property_t *reply;
@@ -1184,6 +1190,9 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
           continue;
         }
         dsvdc_property_add_bool(reply, "metering", false);
+
+      } else if (strcmp(name, "configURL") == 0) {
+        dsvdc_property_add_string(property, name, "https://localhost:11111");
 
       }
 
@@ -1455,14 +1464,17 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
     } else if (strcmp(name, "hardwareVersion") == 0) {
       dsvdc_property_add_string(property, name, "0.0.0");
 
+    } else if (strcmp(name, "configURL") == 0) {
+      dsvdc_property_add_string(property, name, "https://localhost:10000");
+
     } else if (strcmp(name, "hardwareGuid") == 0) {
       char info[256];
       char buffer[32];
       size_t n;
 
       strcpy(info, "macaddress:");
-      sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x", dev->mod->bid[5], dev->mod->bid[4], dev->mod->bid[3],
-          dev->mod->bid[2], dev->mod->bid[1], dev->mod->bid[0]);
+      sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x", dev->mod->bid[0], dev->mod->bid[1], dev->mod->bid[2],
+          dev->mod->bid[3], dev->mod->bid[4], dev->mod->bid[5]);
       strcat(info, buffer);
       dsvdc_property_add_string(property, name, info);
 
