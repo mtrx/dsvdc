@@ -56,6 +56,7 @@ typedef struct netatmo_module
   dsuid_t dsuid;
   char *id;
   char *name;
+  char *type;
   time_t last_message;
   time_t last_seen;
   int values_num;
@@ -808,6 +809,8 @@ netatmo_get_devices()
 
                   if (!strcmp(key, "_id") && (type == json_type_string)) {
                     nmodule->id = strdup(json_object_get_string(val));
+                  } else if (!strcmp(key, "type") && (type == json_type_string)) {
+                    nmodule->type = strdup(json_object_get_string(val));
                   } else if (!strcmp(key, "last_message") && (type == json_type_int)) {
                     nmodule->last_message = json_object_get_int(val);
                   } else if (!strcmp(key, "last_seen") && (type == json_type_int)) {
@@ -882,6 +885,8 @@ netatmo_get_devices()
                     nmodule->name = strdup(json_object_get_string(val));
                   } else if (!strcmp(key, "_id") && (type == json_type_string)) {
                     nmodule->id = strdup(json_object_get_string(val));
+                  } else if (!strcmp(key, "type") && (type == json_type_string)) {
+                    nmodule->type = strdup(json_object_get_string(val));
                   } else if (!strcmp(key, "last_message") && (type == json_type_string)) {
                     nmodule->last_message = json_object_get_int(val);
                   } else if (!strcmp(key, "last_seen") && (type == json_type_string)) {
@@ -979,13 +984,29 @@ netatmo_get_values()
     netatmo_module_t* m = &netatmo.base.modules[n];
 
     char request_body[1024];
+    char request_type[128];
+
+    if (NULL == netatmo.base.modules[n].type) {
+      strcpy(request_type, "Temperature");
+    } else if (strcmp(netatmo.base.modules[n].type, "NAModule1") == 0) {
+      strcpy(request_type, "Temperature,Humidity");
+    } else if (strcmp(netatmo.base.modules[n].type, "NAModule4") == 0) {
+      strcpy(request_type, "Temperature,Humidity,Co2");
+    } else if (strcmp(netatmo.base.modules[n].type, "NAMain") == 0) {
+      strcpy(request_type, "Temperature,Humidity,Co2,Noise,Pressure");
+    } else {
+      strcpy(request_type, "Temperature");
+    }
+
     strcpy(request_body, "access_token=");
     strcat(request_body, g_access_token);
     strcat(request_body, "&device_id=");
     strcat(request_body, netatmo.base.modules[0].id);
     strcat(request_body, "&module_id=");
     strcat(request_body, m->id);
-    strcat(request_body, "&scale=max&type=Temperature,Humidity,Co2&date_end=last");
+    strcat(request_body, "&scale=max&type=");
+    strcat(request_body, request_type);
+    strcat(request_body, "&date_end=last");
 
     struct memory_struct *response = query("https://api.netatmo.net/api/getmeasure", request_body);
     if (response == NULL) {
@@ -1249,43 +1270,51 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
     } else if (strcmp(name, "channelSettings") == 0) {
 
     } else if (strcmp(name, "binaryInputDescriptions") == 0) {
-      dsvdc_property_t *reply;
-      ret = dsvdc_property_new(&reply);
-      if (ret != DSVDC_OK) {
-        printf("failed to allocate reply property for %s\n", name);
-        free(name);
-        continue;
-      }
+      if ((strcmp(dev->mod->type, "NAModule1") == 0) ||
+          (strcmp(dev->mod->type, "NAModule4") == 0)) {
 
-      dsvdc_property_t *nProp;
-      if (dsvdc_property_new(&nProp) != DSVDC_OK) {
-        break;
-      }
-      dsvdc_property_add_string(nProp, "name", "Battery Status");
-      dsvdc_property_add_uint(nProp, "sensorFunction", 12);
-      dsvdc_property_add_double(nProp, "updateInterval", 60 * 5);
-      dsvdc_property_add_property(reply, "0", &nProp);
+        dsvdc_property_t *reply;
+        ret = dsvdc_property_new(&reply);
+        if (ret != DSVDC_OK) {
+          printf("failed to allocate reply property for %s\n", name);
+          free(name);
+          continue;
+        }
 
-      dsvdc_property_add_property(property, name, &reply);
+        dsvdc_property_t *nProp;
+        if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+          break;
+        }
+        dsvdc_property_add_string(nProp, "name", "Battery Status");
+        dsvdc_property_add_uint(nProp, "sensorFunction", 12);
+        dsvdc_property_add_double(nProp, "updateInterval", 60 * 5);
+        dsvdc_property_add_property(reply, "0", &nProp);
+
+        dsvdc_property_add_property(property, name, &reply);
+      }
 
     } else if (strcmp(name, "binaryInputSettings") == 0) {
-      dsvdc_property_t *reply;
-      ret = dsvdc_property_new(&reply);
-      if (ret != DSVDC_OK) {
-        printf("failed to allocate reply property for %s\n", name);
-        free(name);
-        continue;
-      }
+      if ((strcmp(dev->mod->type, "NAModule1") == 0) ||
+          (strcmp(dev->mod->type, "NAModule4") == 0)) {
 
-      dsvdc_property_t *nProp;
-      if (dsvdc_property_new(&nProp) != DSVDC_OK) {
-        break;
-      }
-      dsvdc_property_add_uint(nProp, "group", 8);
-      dsvdc_property_add_uint(nProp, "sensorFunction", 12);
-      dsvdc_property_add_property(reply, "0", &nProp);
+        dsvdc_property_t *reply;
+        ret = dsvdc_property_new(&reply);
+        if (ret != DSVDC_OK) {
+          printf("failed to allocate reply property for %s\n", name);
+          free(name);
+          continue;
+        }
 
-      dsvdc_property_add_property(property, name, &reply);
+        dsvdc_property_t *nProp;
+        if (dsvdc_property_new(&nProp) != DSVDC_OK) {
+          break;
+        }
+        dsvdc_property_add_uint(nProp, "group", 8);
+        dsvdc_property_add_uint(nProp, "sensorFunction", 12);
+        dsvdc_property_add_property(reply, "0", &nProp);
+
+        dsvdc_property_add_property(property, name, &reply);
+      }
 
     } else if (strcmp(name, "sensorDescriptions") == 0) {
       dsvdc_property_t *reply;
@@ -1300,7 +1329,7 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
       char sensorName[64];
       char sensorIndex[64];
 
-      if (dev->mod->bid[0] == 2) {
+      if (strcmp(dev->mod->type, "NAModule1") == 0) {
         sensorUsage = 2; // Outdoor
       } else {
         sensorUsage = 1; // Indoor
@@ -1427,10 +1456,12 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
       if ((idx == 0) && (dsvdc_property_new(&nProp) == DSVDC_OK)) {
 
         bool val;
-        if (dev->mod->bid[0] == 2) {
+        if (strcmp(dev->mod->type, "NAModule1") == 0) {
           val = dev->mod->battery_vp < 4500; // /*for raingauge and outdoor module*/  class NABatteryLevelModule
-        } else {
+        } if (strcmp(dev->mod->type, "NAModule4") == 0) {
           val = dev->mod->battery_vp < 4920; // /*indoor modules*/ class NABatteryLevelIndoorModul
+        } else {
+          val = 0;
         }
 
         dsvdc_property_add_bool(nProp, "value", val);
