@@ -918,6 +918,10 @@ netatmo_get_devices()
     }
   }
 
+  if (NULL == netatmo.base.bssid) {
+    netatmo.base.bssid = strdup(netatmo.base.modules[0].id);
+  }
+
   netatmo_vdcd_t* dev;
   for (n = 0; n < MAX_MODULES; n++) {
     netatmo_module_t* m = &netatmo.base.modules[n];
