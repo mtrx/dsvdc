@@ -1050,6 +1050,8 @@ netatmo_get_values()
                 json_object* jobj_t = va->length >= 1 ? json_object_array_get_idx(jobj3, 0) : NULL;
                 json_object* jobj_h = va->length >= 2 ? json_object_array_get_idx(jobj3, 1) : NULL;
                 json_object* jobj_c = va->length >= 3 ? json_object_array_get_idx(jobj3, 2) : NULL;
+                json_object* jobj_noise = va->length >= 4 ? json_object_array_get_idx(jobj3, 3) : NULL;
+                json_object* jobj_pressure = va->length >= 5 ? json_object_array_get_idx(jobj3, 4) : NULL;
                 for (v = 0; v < netatmo.base.modules[n].values_num; v++) {
                   if (strcmp(netatmo.base.modules[n].values[v].data_type, "Temperature") == 0) {
                     netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
@@ -1064,6 +1066,16 @@ netatmo_get_values()
                   if (strcmp(netatmo.base.modules[n].values[v].data_type, "Co2") == 0) {
                     netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
                     netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_c);
+                    netatmo.base.modules[n].values[v].last_query = now;
+                  }
+                  if (strcmp(netatmo.base.modules[n].values[v].data_type, "Noise") == 0) {
+                    netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
+                    netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_noise);
+                    netatmo.base.modules[n].values[v].last_query = now;
+                  }
+                  if (strcmp(netatmo.base.modules[n].values[v].data_type, "Pressure") == 0) {
+                    netatmo.base.modules[n].values[v].last_value = netatmo.base.modules[n].values[v].value;
+                    netatmo.base.modules[n].values[v].value = json_object_get_double(jobj_pressure);
                     netatmo.base.modules[n].values[v].last_query = now;
                   }
                 }
