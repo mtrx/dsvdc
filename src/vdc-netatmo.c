@@ -1423,7 +1423,9 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
       } else {
         idx = strtol(sensorIndex, NULL, 10);
       }
+
       time_t now = time(NULL);
+      netatmo_get_values();
 
       for (n = 0; n < dev->mod->values_num; n++) {
         if (idx >= 0 && idx != n) {
@@ -1664,22 +1666,40 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
             }
           }
           if (dev->present) {
-            // Test first element if there are new values
-            if (dev->mod->values[0].last_reported >= dev->mod->values[0].last_query) {
-              continue;
-            }
-
             dsvdc_property_t* pushEnvelope;
             dsvdc_property_t* propState;
             dsvdc_property_t* prop;
+
+            time_t now = time(NULL);
+            bool report = false;
+            for (v = 0; v < dev->mod->values_num; v++) {
+              // value too old (> 4h) ?
+              if (now - 2400 >= dev->mod->values[v].last_query) {
+                continue;
+              }
+              // not reported values available?
+              if (dev->mod->values[v].last_reported < dev->mod->values[v].last_query) {
+                report = true;
+              }
+            }
+            if (!report) {
+              continue;
+            }
 
             dsvdc_property_new(&pushEnvelope);
             dsvdc_property_new(&propState);
 
             for (v = 0; v < dev->mod->values_num; v++) {
               double val = dev->mod->values[v].value;
-              time_t now = time(NULL);
 
+              // value too old (> 4h) ?
+              if (now - 2400 >= dev->mod->values[v].last_query) {
+                continue;
+              }
+              // not reported values available?
+              if (dev->mod->values[v].last_reported >= dev->mod->values[v].last_query) {
+                continue;
+              }
               if (dsvdc_property_new(&prop) != DSVDC_OK) {
                 continue;
               }
