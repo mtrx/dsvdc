@@ -1502,16 +1502,33 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
     } else if (strcmp(name, "name") == 0) {
       dsvdc_property_add_string(property, name, dev->mod->name);
 
+    } else if (strcmp(name, "type") == 0) {
+      dsvdc_property_add_string(property, name, "vDC");
+
     } else if (strcmp(name, "model") == 0) {
       char info[256];
       strcpy(info, "Station ");
       strcat(info, netatmo.base.station_name);
       dsvdc_property_add_string(property, name, info);
 
-    } else if (strcmp(name, "modelGuid") == 0) {
+    } else if (strcmp(name, "modelFeatures") == 0) {
+      dsvdc_property_t *nProp;
+      dsvdc_property_new(&nProp);
+      dsvdc_property_add_bool(nProp, "outmode", false);
+      dsvdc_property_add_bool(nProp, "otypeconfig", false);
+      dsvdc_property_add_property(property, name, &nProp);
+
+    } else if (strcmp(name, "modelUID") == 0) {
       char info[256];
-      strcpy(info, "dsuid:");
-      strcat(info, dev->id);
+      if (strcmp(dev->mod->type, "NAModule1") == 0) {
+        strcpy(info, "NetAtmo-Outdoor");  // raingauge and outdoor module
+      } if (strcmp(dev->mod->type, "NAModule4") == 0) {
+    	strcpy(info, "NetAtmo-Indoor"); // indoor modules
+      } if (strcmp(dev->mod->type, "NAMain") == 0) {
+        strcpy(info, "NetAtmo-Station"); // main modules
+      } else {
+        strcpy(info, "NetAtmo-Unknown");
+      }
       dsvdc_property_add_string(property, name, info);
 
     } else if (strcmp(name, "vendorGuid") == 0) {
@@ -1525,6 +1542,9 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
 
     } else if (strcmp(name, "configURL") == 0) {
       dsvdc_property_add_string(property, name, "https://localhost:10000");
+
+    } else if (strcmp(name, "hardwareModelGuid") == 0) {
+      dsvdc_property_add_string(property, name, "gs1:3700730500111");
 
     } else if (strcmp(name, "hardwareGuid") == 0) {
       char info[256];
