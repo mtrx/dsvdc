@@ -776,6 +776,11 @@ netatmo_get_devices()
   printf("\n*** DEVICE Query:\n%s\n", response->memory);
 
   json_object *jobj = json_tokener_parse(response->memory);
+  if (jobj == NULL) {
+    printf("NetAtmo returned unparsable json response");
+    return NETATMO_GETMEASURE_FAILED;
+  }
+
   json_object_object_foreach(jobj, key, val) {
     enum json_type type = json_object_get_type(val);
     //printf("key %s, type %d\n", key, type);
@@ -933,7 +938,7 @@ netatmo_get_devices()
 
       char buffer[128] =
         { 0, };
-      strcpy(buffer, netatmo.base.bssid);
+      strncpy(buffer, netatmo.base.bssid, 64);
       strcat(buffer, "-");
       strcat(buffer, m->id);
 
@@ -1022,6 +1027,11 @@ netatmo_get_values()
     printf("\n*** VALUE Query:\n%s\n", response->memory);
 
     json_object *jobj = json_tokener_parse(response->memory);
+    if (jobj == NULL) {
+      printf("NetAtmo returned unparsable json response");
+      return NETATMO_GETMEASURE_FAILED;
+    }
+
     json_object_object_foreach(jobj, key, val)
     {
       enum json_type type = json_object_get_type(val);
