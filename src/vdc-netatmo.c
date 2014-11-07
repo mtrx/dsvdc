@@ -1374,7 +1374,7 @@ getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const
         dsvdc_property_add_string(nProp, "name", sensorName);
         dsvdc_property_add_uint(nProp, "sensorType", sensorType);
         dsvdc_property_add_uint(nProp, "sensorUsage", sensorUsage);
-        dsvdc_property_add_double(nProp, "alifeSignInterval", 300);
+        dsvdc_property_add_double(nProp, "aliveSignInterval", 300);
 
         snprintf(sensorIndex, 64, "%d", n);
         dsvdc_property_add_property(reply, sensorIndex, &nProp);
