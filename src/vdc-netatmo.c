@@ -463,7 +463,7 @@ write_config()
   }
 
   char tmpfile[PATH_MAX];
-  sprintf(tmpfile, "%s.cfg", g_cfgfile);
+  sprintf(tmpfile, "%s.cfg.new", g_cfgfile);
 
   int ret = config_write_file(&config, tmpfile);
   if (!ret) {
