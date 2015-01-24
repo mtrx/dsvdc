@@ -295,6 +295,7 @@ read_config()
 
       dev->id = strdup(buffer);
       dev->present = false;
+      dev->announced = false;
       dev->mod = m;
 
       dsuid_generate_v3_from_namespace(DSUID_NS_IEEE_MAC, buffer, &dev->dsuid);
@@ -960,7 +961,6 @@ netatmo_get_devices()
       }
 
       dev->id = strdup(buffer);
-      dev->present = true;
       dev->mod = m;
 
       dsuid_generate_v3_from_namespace(DSUID_NS_IEEE_MAC, buffer, &dev->dsuid);
@@ -1053,7 +1053,7 @@ netatmo_get_values()
             enum json_type type = json_object_get_type(val);
             //printf(" -> key %s, type %d\n", key, type);
 
-            if (!strcmp(key, "beg_time") && (type == json_type_string)) {
+            if (!strcmp(key, "beg_time") && (type == json_type_int)) {
               now = json_object_get_int(val);
 
             } else if (!strcmp(key, "value") && (type == json_type_array)) {
@@ -1112,6 +1112,25 @@ netatmo_get_values()
     }
 
   }
+
+  netatmo_vdcd_t* dev;
+  now = time(NULL);
+  LL_FOREACH(devlist, dev)
+  {
+    for (v = 0; v < dev->mod->values_num; v++) {
+      // value too old (> 4h) ?
+      if (now >= dev->mod->values[v].last_query + 2400) {
+        if (dev->present)
+          printf("%s module: ID %s - DSUID is INACTIVE\n", dev->id, dev->dsuidstring);
+        dev->present = false;
+      } else {
+        if (!dev->present)
+          printf("%s module: ID %s - DSUID is ACTIVE\n", dev->id, dev->dsuidstring);
+        dev->present = true;
+      }
+    }
+  }
+
   return 0;
 }
 
@@ -1694,10 +1713,13 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
         LL_FOREACH(devlist, dev)
         {
           if (dev->present && !dev->announced) {
-            if (dsvdc_announce_device(handle, g_vdc_dsuid, dev->dsuidstring, (void *) NULL, announce_device_cb)
-                == DSVDC_OK) {
+            if (dsvdc_announce_device(handle, g_vdc_dsuid, dev->dsuidstring, (void *) NULL, announce_device_cb) == DSVDC_OK) {
               dev->announced = true;
             }
+          }
+          if (!dev->present && dev->announced) {
+            dsvdc_device_vanished(handle, dev->dsuidstring);
+            dev->announced = false;
           }
           if (dev->present) {
             dsvdc_property_t* pushEnvelope;
@@ -1708,9 +1730,9 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
             bool report = false;
             for (v = 0; v < dev->mod->values_num; v++) {
               // value too old (> 4h) ?
-              if (now - 2400 >= dev->mod->values[v].last_query) {
-                continue;
-              }
+              //if (now >= dev->mod->values[v].last_query + 2400) {
+              //  continue;
+              //}
               // not reported values available?
               if (dev->mod->values[v].last_reported < dev->mod->values[v].last_query) {
                 report = true;
@@ -1727,9 +1749,9 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
               double val = dev->mod->values[v].value;
 
               // value too old (> 4h) ?
-              if (now - 2400 >= dev->mod->values[v].last_query) {
-                continue;
-              }
+              //if (now >= dev->mod->values[v].last_query + 2400) {
+              //  continue;
+              //}
               // not reported values available?
               if (dev->mod->values[v].last_reported >= dev->mod->values[v].last_query) {
                 continue;
