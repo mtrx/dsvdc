@@ -521,7 +521,8 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
       size_t n;
 
       strcpy(info, "macaddress:");
-      sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x", dev->mod->bid[0], dev->mod->bid[1], dev->mod->bid[2],
+      sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x",
+          dev->mod->bid[0], dev->mod->bid[1], dev->mod->bid[2],
           dev->mod->bid[3], dev->mod->bid[4], dev->mod->bid[5]);
       strcat(info, buffer);
       dsvdc_property_add_string(property, name, info);
@@ -531,7 +532,25 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
           g_vdsd_deviceIcon16_png, sizeof(g_vdsd_deviceIcon16_png));
 
     } else if (strcmp(name, "deviceIconName") == 0) {
-      dsvdc_property_add_string(property, name, "netatmo-mtrx.png");
+      dsvdc_property_add_string(property, name, "netatmo-vdsd.png");
+
+    /* user properties: authcode, client_id, client_secret */
+
+    } else if (strcmp(name, "authcode") == 0) {
+
+      /* TODO: set operation */
+
+      if (netatmo.authcode != NULL) {
+        dsvdc_property_add_string(property, name, netatmo.authcode);
+      } else {
+        dsvdc_property_add_string(property, name, "");
+      }
+
+    } else if (strcmp(name, "client_id") == 0) {
+      dsvdc_property_add_string(property, name, g_client_id);
+
+    } else if (strcmp(name, "client_secret") == 0) {
+      dsvdc_property_add_string(property, name, g_client_secret);
 
     } else {
       fprintf(stderr, "** Unhandled Property \"%s\"\n", name);
