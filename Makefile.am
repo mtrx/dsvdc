@@ -1,11 +1,6 @@
 AUTOMAKE_OPTIONS = subdir-objects
 ACLOCAL_AMFLAGS = ${ACLOCAL_FLAGS}
 
-bin_PROGRAMS = vdc-netatmo
-vdc_netatmo_SOURCES = src/vdc-netatmo.c
-vdc_netatmo_CFLAGS = $(LIBCONFIG_CFLAGS) $(JSONC_CFLAGS) $(CURL_CFLAGS) $(LIBDSVDC_CFLAGS) $(LIBDSUID_CFLAGS)
-vdc_netatmo_LDADD = $(LIBCONFIG_LIBS) $(JSONC_LIBS) $(CURL_LIBS) $(LIBDSVDC_LIBS) $(LIBDSUID_LIBS)
-
 dist_noinst_SCRIPTS = autogen.sh
 
 SUBDIRS = netatmo
