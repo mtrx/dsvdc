@@ -36,7 +36,7 @@
 #include <json/json.h>
 #include <utlist.h>
 
-#include <digitalSTROM/dsuid/dsuid.h>
+#include <digitalSTROM/dsuid.h>
 #include <dsvdc/dsvdc.h>
 
 #define MAX_MODULES 5
