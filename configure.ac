@@ -49,6 +49,9 @@ PKG_CHECK_MODULES([CURL], [libcurl])
 AC_SUBST(CURL_CFLAGS)
 AC_SUBST(CURL_LIBS)
 
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([
+  Makefile
+  netatmo/Makefile
+])
 AC_OUTPUT
 

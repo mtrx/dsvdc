@@ -7,3 +7,5 @@ vdc_netatmo_CFLAGS = $(LIBCONFIG_CFLAGS) $(JSONC_CFLAGS) $(CURL_CFLAGS) $(LIBDSV
 vdc_netatmo_LDADD = $(LIBCONFIG_LIBS) $(JSONC_LIBS) $(CURL_LIBS) $(LIBDSVDC_LIBS) $(LIBDSUID_LIBS)
 
 dist_noinst_SCRIPTS = autogen.sh
+
+SUBDIRS = netatmo
