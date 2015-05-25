@@ -186,16 +186,16 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
         dsvdc_property_add_string(property, name, info);
 
       } else if (strcmp(name, "modelGuid") == 0) {
-        dsvdc_property_add_string(property, name, "NetAtmo VDC Prototype by mtr [modelGuid]");
+        dsvdc_property_add_string(property, name, "0.0.1");
 
       } else if (strcmp(name, "vendorId") == 0) {
         dsvdc_property_add_string(property, name, "michael@tross.org");
 
       } else if (strcmp(name, "name") == 0) {
-        dsvdc_property_add_string(property, name, "NetAtmo VDC");
+        dsvdc_property_add_string(property, name, "digitalSTROM NetAtmo vDC");
 
       } else if (strcmp(name, "model") == 0) {
-        dsvdc_property_add_string(property, name, "NetAtmo VDC Prototype by mtr [model]");
+        dsvdc_property_add_string(property, name, "digitalSTROM NetAtmo libdSvDC vDC");
 
       } else if (strcmp(name, "capabilities") == 0) {
         dsvdc_property_t *reply;
@@ -502,7 +502,7 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
 
     } else if (strcmp(name, "vendorGuid") == 0) {
       char info[256];
-      strcpy(info, "NetAtmo VDC prototype by mtr");
+      strcpy(info, "digitalSTROM NetAtmo vDC");
       strcat(info, dev->id);
       dsvdc_property_add_string(property, name, info);
 
