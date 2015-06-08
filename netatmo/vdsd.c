@@ -127,22 +127,104 @@ void vdc_bye_cb(dsvdc_t *handle __attribute__((unused)), const char *dsuid, void
 
 bool vdc_remove_cb(dsvdc_t *handle __attribute__((unused)), const char *dsuid, void *userdata)
 {
-    (void)userdata;
-    printf("received remove for dsuid %s\n", dsuid);
+  (void)userdata;
+  printf("received remove for dsuid %s\n", dsuid);
 
-    return true;
+  return true;
 }
 
 void vdc_blink_cb(dsvdc_t *handle __attribute__((unused)), char **dsuid, size_t n_dsuid,
     int32_t group, int32_t zone_id, void *userdata)
 {
-    (void) userdata;
-    size_t n;
+  (void) userdata;
+  size_t n;
 
-    for (n = 0; n < n_dsuid; n++)
-    {
-        printf("received blink for device %s: zone %d, group %d\n", *dsuid, zone_id, group);
+  for (n = 0; n < n_dsuid; n++) {
+    printf("received blink for device %s: zone %d, group %d\n", *dsuid, zone_id, group);
+  }
+}
+
+void vdc_setprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const dsvdc_property_t *properties, void *userdata)
+{
+  (void) userdata;
+  int ret;
+  uint8_t code = DSVDC_ERR_NOT_IMPLEMENTED;
+  size_t i;
+  printf("setprop_cb: request for dsuid \"%s\"\n", dsuid);
+
+  /*
+   * Properties for the VDC
+   */
+  if (strcasecmp(g_vdc_dsuid, dsuid) == 0) {
+    for (i = 0; i < dsvdc_property_get_num_properties(properties); i++) {
+      char *name;
+      ret = dsvdc_property_get_name(properties, i, &name);
+      if (ret != DSVDC_OK) {
+        fprintf(stderr, "setprop_cb: error getting property name\n");
+        code = DSVDC_ERR_MISSING_DATA;
+        break;
+      }
+      if (!name) {
+        fprintf(stderr, "setprop_cb: not handling wildcard properties\n");
+        code = DSVDC_ERR_NOT_IMPLEMENTED;
+        break;
+      }
+
+      if (strcmp(name, "username") == 0) {
+        char* pstring;
+        ret = dsvdc_property_get_string(properties, i, &pstring);
+        if (ret != DSVDC_OK) {
+          fprintf(stderr, "setprop_cb: error getting property value from property %s\n", name);
+          code = DSVDC_ERR_MISSING_DATA;
+          free(name);
+          break;
+        }
+        if (netatmo.username) {
+          free(netatmo.username);
+          netatmo.username = NULL;
+          free(g_access_token);
+          g_access_token = NULL;
+        }
+        if (pstring && strlen(pstring) > 0) {
+          netatmo.username = strdup(pstring);
+        }
+        code = DSVDC_OK;
+      }
+
+      else if (strcmp(name, "password") == 0) {
+        char* pstring;
+        ret = dsvdc_property_get_string(properties, i, &pstring);
+        if (ret != DSVDC_OK) {
+          fprintf(stderr, "setprop_cb: error getting property value from property %s\n", name);
+          code = DSVDC_ERR_MISSING_DATA;
+          free(name);
+          break;
+        }
+        if (netatmo.password) {
+          free(netatmo.password);
+          netatmo.password = NULL;
+          free(g_access_token);
+          g_access_token = NULL;
+        }
+        if (pstring && strlen(pstring) > 0) {
+          netatmo.password = strdup(pstring);
+        }
+        code = DSVDC_OK;
+      }
+
+      else {
+        code = DSVDC_ERR_NOT_FOUND;
+        free(name);
+        break;
+      }
+
+      free(name);
     }
+
+    write_config();
+ }
+
+  dsvdc_send_set_property_response(handle, property, code);
 }
 
 void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *property, const dsvdc_property_t *query, void *userdata)
@@ -164,12 +246,12 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
       int ret = dsvdc_property_get_name(query, i, &name);
       if (ret != DSVDC_OK) {
         fprintf(stderr, "getprop_cb: error getting property name, abort\n");
-        dsvdc_send_property_response(handle, property);
+        dsvdc_send_get_property_response(handle, property);
         return;
       }
       if (!name) {
         fprintf(stderr, "getprop_cb: not yet handling wildcard properties\n");
-        dsvdc_send_property_response(handle, property);
+        dsvdc_send_get_property_response(handle, property);
         return;
       }
       printf("**** request name: %s\n", name);
@@ -184,6 +266,9 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
             netatmo.base.bssid[3], netatmo.base.bssid[2], netatmo.base.bssid[1], netatmo.base.bssid[0]);
         strcat(info, buffer);
         dsvdc_property_add_string(property, name, info);
+
+      } else if (strcmp(name, "modelUID") == 0) {
+        dsvdc_property_add_string(property, name, "libdsvdc:netatmo");
 
       } else if (strcmp(name, "modelGuid") == 0) {
         dsvdc_property_add_string(property, name, "0.0.1");
@@ -210,12 +295,38 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
       } else if (strcmp(name, "configURL") == 0) {
         dsvdc_property_add_string(property, name, "https://localhost:11111");
 
+      /* user properties: authcode, client_id, client_secret */
+
+      } else if (strcmp(name, "x-netatmo-authcode") == 0) {
+
+        if (netatmo.authcode != NULL) {
+          dsvdc_property_add_string(property, name, netatmo.authcode);
+        } else {
+          dsvdc_property_add_string(property, name, "");
+        }
+
+      } else if (strcmp(name, "x-netatmo-username") == 0) {
+        if (netatmo.username != NULL) {
+          dsvdc_property_add_string(property, name, netatmo.username);
+        } else {
+          dsvdc_property_add_string(property, name, "");
+        }
+
+      } else if (strcmp(name, "x-netatmo-client_id") == 0) {
+        dsvdc_property_add_string(property, name, g_client_id);
+
+      } else if (strcmp(name, "x-netatmo-client_secret") == 0) {
+        dsvdc_property_add_string(property, name, g_client_secret);
+
+      } else if (strcmp(name, "x-netatmo-connectionStatus") == 0) {
+        dsvdc_property_add_bool(property, name, g_access_token != NULL);
+
       }
 
       free(name);
     }
 
-    dsvdc_send_property_response(handle, property);
+    dsvdc_send_get_property_response(handle, property);
     return;
   }
 
@@ -239,7 +350,7 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
     int ret = dsvdc_property_get_name(query, i, &name);
     if (ret != DSVDC_OK) {
       fprintf(stderr, "getprop_cb: error getting property name, abort\n");
-      dsvdc_send_property_response(handle, property);
+      dsvdc_send_get_property_response(handle, property);
       return;
     }
     if (!name) {
@@ -534,24 +645,6 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
     } else if (strcmp(name, "deviceIconName") == 0) {
       dsvdc_property_add_string(property, name, "netatmo-vdsd.png");
 
-    /* user properties: authcode, client_id, client_secret */
-
-    } else if (strcmp(name, "authcode") == 0) {
-
-      /* TODO: set operation */
-
-      if (netatmo.authcode != NULL) {
-        dsvdc_property_add_string(property, name, netatmo.authcode);
-      } else {
-        dsvdc_property_add_string(property, name, "");
-      }
-
-    } else if (strcmp(name, "client_id") == 0) {
-      dsvdc_property_add_string(property, name, g_client_id);
-
-    } else if (strcmp(name, "client_secret") == 0) {
-      dsvdc_property_add_string(property, name, g_client_secret);
-
     } else {
       fprintf(stderr, "** Unhandled Property \"%s\"\n", name);
     }
@@ -559,5 +652,5 @@ void vdc_getprop_cb(dsvdc_t *handle, const char *dsuid, dsvdc_property_t *proper
     free(name);
   }
 
-  dsvdc_send_property_response(handle, property);
+  dsvdc_send_get_property_response(handle, property);
 }

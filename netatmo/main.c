@@ -135,6 +135,7 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
   dsvdc_set_ping_callback(handle, vdc_ping_cb);
   dsvdc_set_bye_callback(handle, vdc_bye_cb);
   dsvdc_set_get_property_callback(handle, vdc_getprop_cb);
+  dsvdc_set_set_property_callback(handle, vdc_setprop_cb);
 
   while (!g_shutdown_flag) {
     /* let the work function do our timing, 2secs timeout */
