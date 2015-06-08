@@ -107,7 +107,6 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
   /* initially synchronize NetAtmo device data */
   if (netatmo_get_devices() < 0) {
     fprintf(stderr, "Could not get device data from NetAtmo service!\n");
-    return EXIT_FAILURE;
   }
 
   /* generate a dsuid v1 for the vdc */
@@ -138,26 +137,38 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
   dsvdc_set_set_property_callback(handle, vdc_setprop_cb);
 
   while (!g_shutdown_flag) {
+
     /* let the work function do our timing, 2secs timeout */
     dsvdc_work(handle, 2);
 
     {
+      static int queryTokenTime = 0;
       static int queryDevicesTime = 0;
       static int queryValuesTime = 0;
-      time_t now;
+      time_t now = time(NULL);
 
-      now = time(NULL);
+      printf("time %d, access token %s\n", now, g_access_token);
+      printf(" queryTokenTime %d, queryDevicesTime %d, queryValuesTime %d\n", queryTokenTime, queryDevicesTime, queryValuesTime);
+
       if (g_access_token && (g_refresh_token_valid_until <= now)) {
         free(g_access_token);
         g_access_token = NULL;
-        netatmo_get_token();
       }
-      if (queryDevicesTime <= now) {
-        if (netatmo_get_devices() >= 0) {
-          queryDevicesTime = g_resync_devices + now;
+      if (g_access_token == NULL && (queryTokenTime < now)) {
+        queryTokenTime = 0;
+        if (netatmo_get_token() != 0) {
+          queryTokenTime = now + 30;
         }
       }
-      if (queryValuesTime <= now) {
+
+      if (g_access_token && (queryDevicesTime <= now)) {
+        if (netatmo_get_devices() >= 0) {
+          queryDevicesTime = g_resync_devices + now;
+        } else {
+          queryDevicesTime = 60 + now;
+        }
+      }
+      if (g_access_token && (queryValuesTime <= now)) {
         if (queryValuesTime == 0) {
           queryValuesTime = time(NULL) + 180;
         } else if (netatmo_get_values() >= 0) {
@@ -168,7 +179,7 @@ main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
 
     if (!dsvdc_is_connected(handle)) {
       if (!printed) {
-        fprintf(stderr, "vdC example: we are not connected!\n");
+        fprintf(stderr, "NetAtmo vdC: we are not connected!\n");
         printed = true;
       }
       ready = false;

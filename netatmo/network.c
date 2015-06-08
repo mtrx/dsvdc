@@ -275,6 +275,12 @@ netatmo_get_token()
   }
 
   json_object *jobj = json_tokener_parse(response->memory);
+  if (NULL == jobj) {
+    printf("NetAtmo access token request failed");
+    return NETATMO_AUTH_FAILED;
+  }
+
+  int rval = 0;
   json_object_object_foreach(jobj, key, val) {
     enum json_type type = val ? json_object_get_type(val) : 0;
 
@@ -299,6 +305,7 @@ netatmo_get_token()
       if (type == json_type_string) {
         printf("NetAtmo returned error: %s\n", json_object_get_string(val));
       }
+      rval = NETATMO_AUTH_FAILED;
     } else {
       printf("Unknown key: %s\n", key);
     }
@@ -306,7 +313,7 @@ netatmo_get_token()
 
   free(response->memory);
   free(response);
-  return 0;
+  return rval;
 }
 
 int
@@ -316,13 +323,13 @@ netatmo_get_devices()
 
   printf("Reading device list from NetAtmo\n");
 
-  if (!g_access_token) {
+  if (NULL == g_access_token) {
     if ((rc = netatmo_get_token()) != 0) {
       return rc;
     }
-    if (!g_access_token) {
-      return NETATMO_BAD_ACCESS_TOKEN;
-    }
+  }
+  if (NULL == g_access_token) {
+    return NETATMO_BAD_ACCESS_TOKEN;
   }
 
   char request_body[1024];
@@ -557,10 +564,13 @@ netatmo_get_values()
 
   printf("Reading data values from NetAtmo\n");
 
-  if (!g_access_token) {
+  if (NULL == g_access_token) {
     if ((rc = netatmo_get_token()) != 0) {
       return rc;
     }
+  }
+  if (NULL == g_access_token) {
+    return NETATMO_BAD_ACCESS_TOKEN;
   }
 
   for (n = 0; n < netatmo.base.modules_num; n++) {
